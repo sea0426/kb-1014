@@ -1,151 +1,146 @@
-import streamlit as st
-import pandas as pd
-import math
+import random
+import time
 from pathlib import Path
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
-
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
-
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
-
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
+import streamlit as st
 
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+st.set_page_config(page_title="두더지 잡기 게임")
 
-st.header(f'GDP in {to_year}', divider='gray')
+APP_DIR = Path(__file__).parent
+HOLE_IMAGE = APP_DIR / "hole.png"
+MOLE_IMAGE = APP_DIR / "img.png"
+MOLE_DURATION_SECONDS = 1.5
+REFRESH_SECONDS = 0.1
+POINTS_PER_MOLE = 10
+STARTING_LIVES = 3
 
-''
 
-cols = st.columns(4)
+def initialize_game_state():
+    defaults = {
+        "score": 0,
+        "mole_id": 0,
+        "mole_spawned_at": time.monotonic(),
+        "last_processed_mole_id": -1,
+        "lives": STARTING_LIVES,
+        "game_over": False,
+        "message": "",
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+    if "mole_position" not in st.session_state:
+        st.session_state.mole_position = None
+        spawn_mole()
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+def spawn_mole():
+    if st.session_state.game_over:
+        return
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+    previous_position = st.session_state.mole_position
+    available_holes = [
+        index for index in range(9) if index != previous_position
+    ]
+    if previous_position is None:
+        available_holes = list(range(9))
+    st.session_state.mole_position = random.choice(available_holes)
+    st.session_state.mole_id += 1
+    st.session_state.mole_spawned_at = time.monotonic()
+
+
+def resolve_mole(caught):
+    if (
+        st.session_state.game_over
+        or st.session_state.mole_id <= st.session_state.last_processed_mole_id
+    ):
+        return
+
+    st.session_state.last_processed_mole_id = st.session_state.mole_id
+    if caught:
+        st.session_state.score += POINTS_PER_MOLE
+        st.session_state.message = "두더지를 잡았습니다!"
+    else:
+        st.session_state.lives = max(0, st.session_state.lives - 1)
+        st.session_state.message = "시간이 지나 두더지를 놓쳤어요!"
+        if st.session_state.lives == 0:
+            st.session_state.game_over = True
+
+    if st.session_state.game_over:
+        st.rerun()
+    spawn_mole()
+
+
+def check_mole_timeout():
+    if st.session_state.game_over:
+        return False
+
+    elapsed_seconds = time.monotonic() - st.session_state.mole_spawned_at
+    if elapsed_seconds >= MOLE_DURATION_SECONDS:
+        resolve_mole(caught=False)
+        return True
+    return False
+
+
+def process_hole_click(hole_index, mole_id):
+    if (
+        st.session_state.game_over
+        or mole_id != st.session_state.mole_id
+        or mole_id <= st.session_state.last_processed_mole_id
+    ):
+        return
+
+    if check_mole_timeout():
+        return
+    if hole_index == st.session_state.mole_position:
+        resolve_mole(caught=True)
+
+
+def render_game():
+    st.write(f"라이프: {st.session_state.lives}")
+    if st.session_state.game_over:
+        st.error("게임 오버!")
+        st.metric("최종 점수", st.session_state.score)
+    else:
+        st.metric("현재 점수", st.session_state.score)
+        if st.session_state.message == "두더지를 잡았습니다!":
+            st.success(st.session_state.message)
+        elif st.session_state.message:
+            st.warning(st.session_state.message)
+
+    for row in range(3):
+        columns = st.columns(3)
+        for column in range(3):
+            hole_index = row * 3 + column
+            with columns[column]:
+                image = (
+                    MOLE_IMAGE
+                    if not st.session_state.game_over
+                    and hole_index == st.session_state.mole_position
+                    else HOLE_IMAGE
+                )
+                st.image(str(image), width=160)
+                st.button(
+                    "구멍 클릭",
+                    key=f"hole_{hole_index}",
+                    on_click=process_hole_click,
+                    args=(hole_index, st.session_state.mole_id),
+                    width="stretch",
+                    disabled=st.session_state.game_over,
+                )
+
+
+initialize_game_state()
+
+st.title("두더지 잡기 게임")
+st.subheader("두더지를 클릭해 보세요!")
+
+
+@st.fragment(run_every=0.1 if not st.session_state.game_over else None)
+def game_frame():
+    check_mole_timeout()
+    render_game()
+
+
+game_frame()
